@@ -1,0 +1,100 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64, runner: ubuntu-latest, zig: "" }
+          - { goos: linux, goarch: arm64, runner: ubuntu-latest, zig: "" } # Oracle Cloud ARM (Ampere)
+          - { goos: darwin, goarch: amd64, runner: macos-13, zig: "" }
+          - { goos: darwin, goarch: arm64, runner: macos-14, zig: "" }
+          - { goos: windows, goarch: amd64, runner: windows-latest, zig: "" }
+          - { goos: windows, goarch: arm64, runner: windows-latest, zig: "aarch64-windows-gnu" }
+    env:
+      PLUGIN: prism-plugin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Install cross C toolchain (linux/arm64)
+        if: matrix.goos == 'linux' && matrix.goarch == 'arm64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Install zig (windows/arm64 cross C toolchain)
+        if: matrix.zig != ''
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+
+      - name: Test (host)
+        shell: bash
+        run: go vet ./... && go test ./...
+
+      - name: Build
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+          CC: ${{ matrix.goos == 'linux' && matrix.goarch == 'arm64' && 'aarch64-linux-gnu-gcc' || (matrix.zig != '' && 'zig cc -target aarch64-windows-gnu' || '') }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          [ -n "$VERSION" ] || VERSION=0.0.0-dev
+          EXT=so
+          [ "${{ matrix.goos }}" = "darwin" ] && EXT=dylib
+          [ "${{ matrix.goos }}" = "windows" ] && EXT=dll
+          mkdir -p dist
+          go build -trimpath -buildvcs=false -buildmode=c-shared \
+            -ldflags "-s -w -X main.pluginVersion=$VERSION" \
+            -o "dist/${PLUGIN}.${EXT}" .
+          rm -f "dist/${PLUGIN}.h"
+          python3 scripts/package.py --version "$VERSION" \
+            --goos "${{ matrix.goos }}" --goarch "${{ matrix.goarch }}"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/*.zip
+            dist/*.sha256
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Aggregate checksums
+        run: |
+          cd dist
+          rm -f checksums.txt
+          cat ./*.sha256 > checksums.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.zip
+            dist/*.sha256
+            dist/checksums.txt
+          generate_release_notes: true

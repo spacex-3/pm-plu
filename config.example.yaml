@@ -1,0 +1,15 @@
+plugins:
+  enabled: true
+  dir: plugins
+  configs:
+    prism-plugin:
+      enabled: true
+      priority: 100
+      # base_url: https://prism.openai.com
+      # effort: medium          # low / medium / high
+      # timeout_seconds: 240
+      # concurrency: 1          # sandbox pool size = parallel turns (cap 60, Pro account limit)
+      # keepalive_seconds: 600  # ping idle sandboxes to keep them warm
+      # max_transcript_chars: 24000
+      model_aliases:
+        gpt-5.5: gpt-5.6-sol

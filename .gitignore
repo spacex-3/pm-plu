@@ -1,0 +1,8 @@
+# build artifacts
+dist/
+*.h
+*.log
+
+# secrets - never commit a session: it contains your cookies and sandbox token
+session.json
+*.session.json
